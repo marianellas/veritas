@@ -27,7 +27,6 @@ class PRCreator:
         # Remove .git suffix
         repo_url = repo_url.rstrip('.git')
         
-        # Extract owner/repo from URL
         patterns = [
             r'github\.com[:/]([^/]+)/([^/]+)',
             r'^([^/]+)/([^/]+)$',
