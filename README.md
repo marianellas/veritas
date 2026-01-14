@@ -91,9 +91,52 @@ veritas/
 └── package.json
 ```
 
+## Backend API
+
+A **real LLM-powered backend** is available in the `backend/` directory. See [backend/README.md](backend/README.md) for setup instructions.
+
+### Quick Start with Backend
+
+1. **Set up the backend:**
+   ```bash
+   cd backend
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   pip install -r requirements.txt
+   cp env.example .env
+   # Edit .env and add your OPENAI_API_KEY
+   ```
+
+2. **Run the backend:**
+   ```bash
+   uvicorn main:app --reload --host 0.0.0.0 --port 8000
+   ```
+
+3. **Configure the frontend:**
+   Create a `.env.local` file in the root directory:
+   ```env
+   NEXT_PUBLIC_API_URL=http://localhost:8000/api
+   NEXT_PUBLIC_USE_MOCK_API=false
+   ```
+
+4. **Run the frontend:**
+   ```bash
+   npm run dev
+   ```
+
+The frontend will now use the real backend with LLM-powered test generation!
+
+### Mock Mode (Default)
+
+By default, the frontend uses **mock mode** for demo purposes. To use mock mode, either:
+- Don't set `NEXT_PUBLIC_USE_MOCK_API=false`, or
+- Set `NEXT_PUBLIC_USE_MOCK_API=true`
+
 ## API Integration Guide
 
-The current implementation uses **mocked API calls** for demo purposes. To integrate with a real backend, replace the functions in `lib/api.ts` with actual HTTP requests.
+The frontend can work with either:
+1. **Mock API** (default) - Simulated test generation for demos
+2. **Real Backend** - LLM-powered test generation (see backend/README.md)
 
 ### API Contract
 
