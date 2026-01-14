@@ -7,6 +7,11 @@
 
 # testing
 /coverage
+.coverage
+htmlcov/
+.pytest_cache/
+*.cover
+.hypothesis/
 
 # next.js
 /.next/
