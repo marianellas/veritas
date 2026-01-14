@@ -1,8 +1,9 @@
 import { RunResult, RunEvent, StartRunPayload, PipelineStepName } from './types'
 import { saveRun } from './storage'
 
-// Mock API client - replace with real API calls later
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api'
+// API configuration - set NEXT_PUBLIC_USE_MOCK_API=false to use real backend
+const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK_API !== 'false'
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api'
 
 // Simulate delay for realistic UX
 function delay(ms: number): Promise<void> {
@@ -117,19 +118,184 @@ def test_${functionName}_edge_cases():
 }
 
 export async function startRun(payload: StartRunPayload): Promise<string> {
-  // In real implementation: POST to ${API_BASE}/runs
-  const run = generateMockRunResult(payload)
-  saveRun(run)
-  return run.runId
+  if (USE_MOCK) {
+    const run = generateMockRunResult(payload)
+    saveRun(run)
+    return run.runId
+  }
+
+  // Real API call
+  const response = await fetch(`${API_BASE}/runs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      code: payload.code,
+      function_name: payload.functionName,
+      options: {
+        max_iterations: payload.options.maxIterations,
+        test_style: payload.options.testStyle,
+        coverage_threshold: payload.options.coverageThreshold,
+        edge_case_categories: payload.options.edgeCaseCategories,
+        create_pr: payload.options.createPR,
+        repo_url: payload.options.repoUrl,
+        branch: payload.options.branch,
+      },
+    }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Failed to start run: ${response.statusText}`)
+  }
+
+  const data = await response.json()
+  return data.runId
 }
 
 export async function getRun(runId: string): Promise<RunResult | null> {
-  // In real implementation: GET ${API_BASE}/runs/${runId}
-  const { getRun: getStoredRun } = await import('./storage')
-  return getStoredRun(runId)
+  if (USE_MOCK) {
+    const { getRun: getStoredRun } = await import('./storage')
+    return getStoredRun(runId)
+  }
+
+  // Real API call
+  try {
+    const response = await fetch(`${API_BASE}/runs/${runId}`)
+    if (!response.ok) {
+      return null
+    }
+    const data = await response.json()
+    
+    // Transform backend format to frontend format
+    return {
+      runId: data.run_id,
+      status: data.status,
+      functionName: data.function_name,
+      code: data.code,
+      options: {
+        maxIterations: data.options.max_iterations,
+        testStyle: data.options.test_style,
+        coverageThreshold: data.options.coverage_threshold,
+        edgeCaseCategories: data.options.edge_case_categories,
+        createPR: data.options.create_pr,
+        repoUrl: data.options.repo_url,
+        branch: data.options.branch,
+      },
+      inferredSpec: data.inferred_spec,
+      edgeCases: data.edge_cases,
+      generatedTests: data.generated_tests,
+      testRunOutput: {
+        stdout: data.test_run_output.stdout,
+        stderr: data.test_run_output.stderr,
+        exitCode: data.test_run_output.exit_code,
+      },
+      coverageSummary: {
+        lines: data.coverage_summary.lines,
+        branches: data.coverage_summary.branches,
+        functions: data.coverage_summary.functions,
+        files: data.coverage_summary.files,
+      },
+      patchDiff: data.patch_diff,
+      pr: data.pr ? {
+        title: data.pr.title,
+        body: data.pr.body,
+        url: data.pr.url,
+        changedFiles: data.pr.changed_files,
+      } : undefined,
+      artifactsPath: data.artifacts_path,
+      iterationsUsed: data.iterations_used,
+      steps: data.steps,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    }
+  } catch (error) {
+    console.error('Error fetching run:', error)
+    return null
+  }
 }
 
 export function streamRunEvents(
+  runId: string,
+  onEvent: (event: RunEvent) => void,
+  payload: StartRunPayload
+): () => void {
+  if (USE_MOCK) {
+    return streamMockEvents(runId, onEvent, payload)
+  }
+
+  // Real SSE streaming
+  const eventSource = new EventSource(`${API_BASE}/runs/${runId}/stream`)
+  
+  eventSource.onmessage = (e) => {
+    try {
+      const event: RunEvent = JSON.parse(e.data)
+      onEvent(event)
+      
+      // Update localStorage when run completes
+      if (event.type === 'run_complete' && event.data) {
+        const { getRun: getStoredRun, saveRun: saveStoredRun } = require('./storage')
+        const transformed = transformBackendRunToFrontend(event.data)
+        saveStoredRun(transformed)
+      }
+    } catch (error) {
+      console.error('Error parsing SSE event:', error)
+    }
+  }
+  
+  eventSource.onerror = (error) => {
+    console.error('SSE error:', error)
+    eventSource.close()
+  }
+  
+  return () => {
+    eventSource.close()
+  }
+}
+
+function transformBackendRunToFrontend(data: any): RunResult {
+  return {
+    runId: data.run_id,
+    status: data.status,
+    functionName: data.function_name,
+    code: data.code,
+    options: {
+      maxIterations: data.options.max_iterations,
+      testStyle: data.options.test_style,
+      coverageThreshold: data.options.coverage_threshold,
+      edgeCaseCategories: data.options.edge_case_categories,
+      createPR: data.options.create_pr,
+      repoUrl: data.options.repo_url,
+      branch: data.options.branch,
+    },
+    inferredSpec: data.inferred_spec,
+    edgeCases: data.edge_cases,
+    generatedTests: data.generated_tests,
+    testRunOutput: {
+      stdout: data.test_run_output.stdout,
+      stderr: data.test_run_output.stderr,
+      exitCode: data.test_run_output.exit_code,
+    },
+    coverageSummary: {
+      lines: data.coverage_summary.lines,
+      branches: data.coverage_summary.branches,
+      functions: data.coverage_summary.functions,
+      files: data.coverage_summary.files,
+    },
+    patchDiff: data.patch_diff,
+    pr: data.pr ? {
+      title: data.pr.title,
+      body: data.pr.body,
+      url: data.pr.url,
+      changedFiles: data.pr.changed_files,
+    } : undefined,
+    artifactsPath: data.artifacts_path,
+    iterationsUsed: data.iterations_used,
+    steps: data.steps,
+    createdAt: data.created_at,
+    updatedAt: data.updated_at,
+  }
+}
+
+function streamMockEvents(
   runId: string,
   onEvent: (event: RunEvent) => void,
   payload: StartRunPayload
@@ -318,11 +484,22 @@ ${run.generatedTests.split('\n').map((l, i) => `+${l}`).join('\n')}
 }
 
 export async function cancelRun(runId: string): Promise<void> {
-  // In real implementation: POST ${API_BASE}/runs/${runId}/cancel
-  const { getRun: getStoredRun, saveRun: saveStoredRun } = await import('./storage')
-  const run = getStoredRun(runId)
-  if (run) {
-    run.status = 'cancelled'
-    saveStoredRun(run)
+  if (USE_MOCK) {
+    const { getRun: getStoredRun, saveRun: saveStoredRun } = await import('./storage')
+    const run = getStoredRun(runId)
+    if (run) {
+      run.status = 'cancelled'
+      saveStoredRun(run)
+    }
+    return
+  }
+
+  // Real API call
+  const response = await fetch(`${API_BASE}/runs/${runId}/cancel`, {
+    method: 'POST',
+  })
+
+  if (!response.ok) {
+    throw new Error(`Failed to cancel run: ${response.statusText}`)
   }
 }
