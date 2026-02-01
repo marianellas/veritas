@@ -6,7 +6,8 @@ import { RunOptions, EdgeCaseCategory } from '@/lib/types'
 import { startRun } from '@/lib/api'
 import RepoConnectCard from '@/components/RepoConnectCard'
 
-type InputMethod = 'paste' | 'upload'
+type InputMethod = 'paste' | 'upload' | 'experiment'
+type CodeType = 'function' | 'class' | 'module'
 
 export default function HomePage() {
   const router = useRouter()
@@ -16,6 +17,27 @@ export default function HomePage() {
   const [functions, setFunctions] = useState<string[]>([])
   const [isGenerating, setIsGenerating] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  
+  // Experiment mode state
+  const [experimentDescription, setExperimentDescription] = useState('')
+  const [codeType, setCodeType] = useState<CodeType>('function')
+  const [generatedCode, setGeneratedCode] = useState('')
+  const [isGeneratingCode, setIsGeneratingCode] = useState(false)
+  const [codePrompt, setCodePrompt] = useState(`Generate a Python {codeType} based on this description:
+
+{description}
+
+Requirements:
+- Write clean, well-documented Python code
+- Include proper type hints if applicable
+- Follow PEP 8 style guidelines
+- Make the code functional and complete
+- Return ONLY the code, no explanations or markdown formatting`)
+  
+  // Update prompt when codeType changes
+  const handleCodeTypeChange = (newType: CodeType) => {
+    setCodeType(newType)
+  }
   
   const [options, setOptions] = useState<RunOptions>({
     maxIterations: 3,
@@ -57,6 +79,69 @@ export default function HomePage() {
         handleCodeChange(content)
       }
       reader.readAsText(file)
+    }
+  }
+
+  const handleGenerateCode = async () => {
+    if (!experimentDescription.trim()) {
+      alert('Please enter a description')
+      return
+    }
+
+    setIsGeneratingCode(true)
+    try {
+      const prompt = codePrompt
+        .replace('{codeType}', codeType)
+        .replace('{description}', experimentDescription)
+      
+      const response = await fetch('/api/generate-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, codeType }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        const errorMessage = data.error || 'Failed to generate code'
+        console.error('API Error:', errorMessage, data)
+        alert(`Error: ${errorMessage}`)
+        return
+      }
+
+      if (!data.code) {
+        throw new Error('No code generated in response')
+      }
+
+      let generated = data.code
+      
+      // Clean up markdown code blocks if present
+      if (generated.startsWith('```python')) {
+        generated = generated.replace(/^```python\n?/, '').replace(/\n?```$/, '')
+      } else if (generated.startsWith('```')) {
+        generated = generated.replace(/^```\n?/, '').replace(/\n?```$/, '')
+      }
+      
+      if (!generated.trim()) {
+        throw new Error('Generated code is empty')
+      }
+      
+      setGeneratedCode(generated)
+      handleCodeChange(generated)
+    } catch (error: any) {
+      console.error('Failed to generate code:', error)
+      const errorMessage = error.message || 'Failed to generate code. Please check your OpenAI API key in .env.local'
+      alert(errorMessage)
+    } finally {
+      setIsGeneratingCode(false)
+    }
+  }
+
+  const handleUseGeneratedCode = () => {
+    if (generatedCode) {
+      setCode(generatedCode)
+      handleCodeChange(generatedCode)
+      setInputMethod('paste') // Switch to paste tab to show the code
     }
   }
 
@@ -115,6 +200,16 @@ export default function HomePage() {
             >
               Upload File
             </button>
+            <button
+              onClick={() => setInputMethod('experiment')}
+              className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${
+                inputMethod === 'experiment'
+                  ? 'border-b-2 border-sage-600 text-sage-700'
+                  : 'text-neutral-600 hover:text-neutral-900'
+              }`}
+            >
+              Experiment
+            </button>
           </div>
           <div className="p-4">
             {inputMethod === 'paste' ? (
@@ -124,7 +219,7 @@ export default function HomePage() {
                 placeholder="def add(a, b):&#10;    return a + b"
                 className="h-64 w-full rounded-md border border-neutral-300 p-3 font-mono text-sm focus:border-sage-500 focus:outline-none focus:ring-1 focus:ring-sage-500"
               />
-            ) : (
+            ) : inputMethod === 'upload' ? (
               <div>
                 <input
                   ref={fileInputRef}
@@ -142,6 +237,104 @@ export default function HomePage() {
                 {code && (
                   <div className="mt-4 rounded-md bg-neutral-50 p-3 text-sm text-neutral-700">
                     Code loaded ({code.split('\n').length} lines)
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-neutral-700 mb-2">
+                    Description
+                  </label>
+                  <textarea
+                    value={experimentDescription}
+                    onChange={(e) => setExperimentDescription(e.target.value)}
+                    placeholder="Describe the Python code you want to generate, e.g., 'A function that calculates the factorial of a number'"
+                    className="h-32 w-full rounded-md border border-neutral-300 p-3 text-sm focus:border-sage-500 focus:outline-none focus:ring-1 focus:ring-sage-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-neutral-700 mb-2">
+                    Code Type
+                  </label>
+                  <div className="flex gap-4">
+                    <label className="flex items-center">
+                      <input
+                        type="radio"
+                        value="function"
+                        checked={codeType === 'function'}
+                        onChange={(e) => handleCodeTypeChange(e.target.value as CodeType)}
+                        className="h-4 w-4 text-sage-600 focus:ring-sage-500"
+                      />
+                      <span className="ml-2 text-sm text-neutral-700">Function</span>
+                    </label>
+                    <label className="flex items-center">
+                      <input
+                        type="radio"
+                        value="class"
+                        checked={codeType === 'class'}
+                        onChange={(e) => handleCodeTypeChange(e.target.value as CodeType)}
+                        className="h-4 w-4 text-sage-600 focus:ring-sage-500"
+                      />
+                      <span className="ml-2 text-sm text-neutral-700">Class</span>
+                    </label>
+                    <label className="flex items-center">
+                      <input
+                        type="radio"
+                        value="module"
+                        checked={codeType === 'module'}
+                        onChange={(e) => handleCodeTypeChange(e.target.value as CodeType)}
+                        className="h-4 w-4 text-sage-600 focus:ring-sage-500"
+                      />
+                      <span className="ml-2 text-sm text-neutral-700">Module</span>
+                    </label>
+                  </div>
+                </div>
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-sm font-medium text-neutral-700">
+                      Generation Prompt (Editable)
+                    </label>
+                    <span className="text-xs text-neutral-500">
+                      Use {'{codeType}'} and {'{description}'} as placeholders
+                    </span>
+                  </div>
+                  <textarea
+                    value={codePrompt}
+                    onChange={(e) => setCodePrompt(e.target.value)}
+                    className="h-32 w-full rounded-md border border-neutral-300 p-3 font-mono text-xs focus:border-sage-500 focus:outline-none focus:ring-1 focus:ring-sage-500"
+                  />
+                </div>
+                <button
+                  onClick={handleGenerateCode}
+                  disabled={!experimentDescription.trim() || isGeneratingCode}
+                  className="w-full rounded-md bg-sage-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-sage-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isGeneratingCode ? 'Generating...' : 'Generate Code'}
+                </button>
+                {generatedCode && (
+                  <div className="space-y-3 rounded-lg border border-neutral-200 bg-neutral-50 p-4">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-sm font-semibold text-neutral-900">Generated Code</h4>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={handleUseGeneratedCode}
+                          className="rounded-md bg-sage-600 px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-sage-700"
+                        >
+                          Use This Code
+                        </button>
+                        <button
+                          onClick={handleGenerateCode}
+                          disabled={isGeneratingCode}
+                          className="rounded-md border border-neutral-300 bg-white px-3 py-1 text-xs font-medium text-neutral-700 transition-colors hover:bg-neutral-50 disabled:opacity-50"
+                        >
+                          Regenerate
+                        </button>
+                      </div>
+                    </div>
+                    <pre className="max-h-64 overflow-auto rounded-md border border-neutral-200 bg-white p-3 text-xs">
+                      <code>{generatedCode}</code>
+                    </pre>
                   </div>
                 )}
               </div>
