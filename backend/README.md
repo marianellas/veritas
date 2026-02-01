@@ -44,7 +44,7 @@ cp .env.example .env
 
 Required environment variables:
 - `OPENAI_API_KEY`: Your OpenAI API key
-- `OPENAI_MODEL`: Model to use (default: `gpt-4-turbo-preview`)
+- `OPENAI_MODEL`: Model to use (default: `gpt-4o-mini`)
 - `GITHUB_TOKEN`: Optional, for PR creation
 
 ### Running the Server

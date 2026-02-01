@@ -339,6 +339,12 @@ async def execute_pipeline(run_id: str, payload: StartRunPayload):
                 "message": "Creating GitHub pull request...",
                 "timestamp": datetime.now().isoformat(),
             })
+            
+            # Log PR creation details
+            print(f"[PR Creation] Repo URL: {payload.options.repo_url}")
+            print(f"[PR Creation] Branch: {payload.options.branch}")
+            print(f"[PR Creation] GitHub Token: {'Set' if os.getenv('GITHUB_TOKEN') else 'NOT SET'}")
+            
             pr_info = await pr_creator.create_pr(
                 payload.options.repo_url,
                 payload.options.branch,
@@ -348,14 +354,25 @@ async def execute_pipeline(run_id: str, payload: StartRunPayload):
                 patch_diff,
                 generated_tests,  # Pass the actual test content
             )
+            
             run = runs[run_id]
             run.pr = pr_info
-            await update_step(run_id, "open_pr", "success")
-            emit_event(run_id, {
-                "type": "log",
-                "message": "✓ Pull request created",
-                "timestamp": datetime.now().isoformat(),
-            })
+            
+            if pr_info.url:
+                emit_event(run_id, {
+                    "type": "log",
+                    "message": f"✓ Pull request created: {pr_info.url}",
+                    "timestamp": datetime.now().isoformat(),
+                })
+            else:
+                emit_event(run_id, {
+                    "type": "log",
+                    "message": f"⚠ PR creation failed or skipped. Check logs for details.",
+                    "timestamp": datetime.now().isoformat(),
+                })
+                print(f"[PR Creation] PR URL is None. Error may be in PR body: {pr_info.body[:200]}")
+            
+            await update_step(run_id, "open_pr", "success" if pr_info.url else "fail")
         
         run.status = "success"
         run.updated_at = datetime.now().isoformat()
