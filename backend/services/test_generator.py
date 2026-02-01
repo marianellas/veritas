@@ -25,17 +25,21 @@ class TestGenerator:
         return self._client
     
     async def infer_behavior(self, code: str, function_name: str) -> Tuple[str, List[str]]:
-        """Infer function behavior and edge cases using LLM"""
-        prompt = f"""Analyze this Python function and infer its behavior:
+        """Infer function or class behavior and edge cases using LLM"""
+        # Detect if it's a class or function
+        is_class = f"class {function_name}" in code or f"class {function_name}(" in code
+        item_type = "class" if is_class else "function"
+        
+        prompt = f"""Analyze this Python {item_type} and infer its behavior:
 
 ```python
 {code}
 ```
 
-Function name: {function_name}
+{item_type.capitalize()} name: {function_name}
 
 Provide:
-1. A clear description of what this function does
+1. A clear description of what this {item_type} does
 2. A list of potential edge cases to test
 
 Respond in this format:
@@ -82,6 +86,10 @@ EDGE_CASES: [comma-separated list]
     ) -> str:
         """Generate pytest tests using LLM"""
         
+        # Detect if it's a class or function
+        is_class = f"class {function_name}" in code or f"class {function_name}(" in code
+        item_type = "class" if is_class else "function"
+        
         # Build edge case requirements
         edge_case_reqs = []
         if options.edge_case_categories.empty:
@@ -103,7 +111,34 @@ EDGE_CASES: [comma-separated list]
             else "Use standard unit tests with pytest"
         )
         
-        prompt = f"""Generate comprehensive pytest tests for this Python function:
+        if is_class:
+            prompt = f"""Generate comprehensive pytest tests for this Python class:
+
+```python
+{code}
+```
+
+Class name: {function_name}
+Inferred behavior: {inferred_spec}
+Edge cases to cover: {', '.join(edge_cases)}
+Additional edge case categories: {', '.join(edge_case_reqs) if edge_case_reqs else 'None'}
+Test style: {test_style_instruction}
+
+Requirements:
+- Generate complete, runnable pytest test code
+- Import the class correctly (assume it's in a module called 'your_module')
+- Test class instantiation and all methods
+- Cover the inferred behavior
+- Include edge cases: {', '.join(edge_cases)}
+- Target coverage threshold: {options.coverage_threshold}%
+- Make tests specific and meaningful, not generic
+- Include docstrings for each test function
+- Ensure all tests are valid Python code
+
+Return ONLY the test code, no explanations or markdown formatting.
+"""
+        else:
+            prompt = f"""Generate comprehensive pytest tests for this Python function:
 
 ```python
 {code}

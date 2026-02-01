@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
       messages: [
         {
           role: 'system',
-          content: `You are an expert Python developer. Generate clean, well-documented Python ${codeType} code based on user descriptions. Return ONLY the code, no explanations or markdown formatting.`,
+          content: `You are an expert Python developer. Generate clean, well-documented ${codeType} code based on user descriptions. Return ONLY the code, no explanations or markdown formatting.`,
         },
         {
           role: 'user',

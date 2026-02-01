@@ -23,7 +23,7 @@ export default function HomePage() {
   const [codeType, setCodeType] = useState<CodeType>('function')
   const [generatedCode, setGeneratedCode] = useState('')
   const [isGeneratingCode, setIsGeneratingCode] = useState(false)
-  const [codePrompt, setCodePrompt] = useState(`Generate a Python {codeType} based on this description:
+  const [codePrompt, setCodePrompt] = useState(`Generate a {codeType} based on this description:
 
 {description}
 
@@ -56,9 +56,40 @@ Requirements:
   })
 
   const parseFunctions = (code: string): string[] => {
+    const items: string[] = []
+    const lines = code.split('\n')
+    
+    // Parse classes (look for 'class ClassName:')
+    const classRegex = /^class\s+(\w+)/gm
+    const classMatches = Array.from(code.matchAll(classRegex))
+    classMatches.forEach((match) => {
+      if (match.index !== undefined) {
+        const lineIndex = code.substring(0, match.index).split('\n').length - 1
+        const line = lines[lineIndex]
+        // Only include classes that are at module level (not nested)
+        const indent = line.length - line.trimStart().length
+        if (indent === 0) {
+          items.push(match[1])
+        }
+      }
+    })
+    
+    // Parse top-level functions (not methods inside classes)
     const functionRegex = /^def\s+(\w+)\s*\(/gm
-    const matches = Array.from(code.matchAll(functionRegex))
-    return matches.map((m) => m[1])
+    const functionMatches = Array.from(code.matchAll(functionRegex))
+    functionMatches.forEach((match) => {
+      if (match.index !== undefined) {
+        const lineIndex = code.substring(0, match.index).split('\n').length - 1
+        const line = lines[lineIndex]
+        // Only include functions at module level (no or minimal indentation)
+        const indent = line.length - line.trimStart().length
+        if (indent === 0) {
+          items.push(match[1])
+        }
+      }
+    })
+    
+    return items
   }
 
   const handleCodeChange = (newCode: string) => {
@@ -147,7 +178,7 @@ Requirements:
 
   const handleGenerate = async () => {
     if (!code.trim() || !selectedFunction) {
-      alert('Please provide code and select a function')
+      alert('Please provide code and select a function or class')
       return
     }
 
@@ -161,7 +192,8 @@ Requirements:
       router.push(`/run/${runId}`)
     } catch (error) {
       console.error('Failed to start run:', error)
-      alert('Failed to start run. Please try again.')
+      const errorMessage = error instanceof Error ? error.message : 'Failed to start run. Please try again.'
+      alert(errorMessage)
     } finally {
       setIsGenerating(false)
     }
@@ -342,11 +374,11 @@ Requirements:
           </div>
         </div>
 
-        {/* Function Selector */}
+        {/* Function/Class Selector */}
         {functions.length > 0 && (
           <div className="rounded-lg border border-neutral-200 bg-white p-6">
             <label className="block text-sm font-medium text-neutral-700">
-              Select Function
+              Select Function or Class
             </label>
             <select
               value={selectedFunction}
@@ -359,6 +391,11 @@ Requirements:
                 </option>
               ))}
             </select>
+            <p className="mt-2 text-xs text-neutral-500">
+              {functions.some(f => /^[A-Z]/.test(f)) 
+                ? 'Classes and functions detected. Select one to generate tests.'
+                : 'Functions detected. Select one to generate tests.'}
+            </p>
           </div>
         )}
 

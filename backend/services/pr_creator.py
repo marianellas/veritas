@@ -113,8 +113,12 @@ Note: GITHUB_TOKEN not configured. PR was not actually created.
             if not test_content:
                 raise ValueError("Test content is required to create PR")
             
-            # Create file in the new branch
+            # GitHub's create_file API automatically creates parent directories
+            # So we don't need to create experiments/ folder first
             file_path = f"experiments/{run_id}/test_{function_name}.py"
+            
+            # Create file in the new branch
+            # GitHub will automatically create the experiments/{run_id}/ directory structure
             repo.create_file(
                 path=file_path,
                 message=f"Add tests for {function_name} (veritas-pytest)",

@@ -3,7 +3,32 @@ import { saveRun } from './storage'
 
 // API configuration - set NEXT_PUBLIC_USE_MOCK_API=false to use real backend
 const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK_API !== 'false'
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api'
+
+// Determine API base URL - use environment variable or detect from current hostname
+// This must be a function so it's called at runtime, not module load time
+function getApiBase(): string {
+  // Always check environment variable first
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL
+  }
+  
+  // If accessing from network IP, use that IP for backend too
+  // This only works in the browser (window is undefined in SSR)
+  if (typeof window !== 'undefined' && window.location && window.location.hostname) {
+    const hostname = window.location.hostname
+    console.log(`[API] Detected hostname: ${hostname}`)
+    // If not localhost, use the same hostname for backend
+    if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+      const apiUrl = `http://${hostname}:8000/api`
+      console.log(`[API] Using network API URL: ${apiUrl}`)
+      return apiUrl
+    }
+  }
+  
+  const defaultUrl = 'http://localhost:8000/api'
+  console.log(`[API] Using default API URL: ${defaultUrl}`)
+  return defaultUrl
+}
 
 // Simulate delay for realistic UX
 function delay(ms: number): Promise<void> {
@@ -125,7 +150,9 @@ export async function startRun(payload: StartRunPayload): Promise<string> {
   }
 
   // Real API call
-  const response = await fetch(`${API_BASE}/runs`, {
+  const apiBase = getApiBase()
+  console.log(`[API] Attempting to connect to: ${apiBase}/runs`)
+  const response = await fetch(`${apiBase}/runs`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -141,10 +168,24 @@ export async function startRun(payload: StartRunPayload): Promise<string> {
         branch: payload.options.branch,
       },
     }),
+  }).catch((error) => {
+    console.error(`[API] Fetch failed for ${apiBase}/runs:`, error)
+    throw new Error(`Cannot connect to backend at ${apiBase}. Make sure the backend is running and accessible.`)
   })
 
   if (!response.ok) {
-    throw new Error(`Failed to start run: ${response.statusText}`)
+    let errorMessage = `Failed to start run: ${response.statusText}`
+    try {
+      const errorData = await response.json()
+      if (errorData.detail) {
+        errorMessage = `Failed to start run: ${errorData.detail}`
+      } else if (errorData.message) {
+        errorMessage = `Failed to start run: ${errorData.message}`
+      }
+    } catch (e) {
+      // If response isn't JSON, use status text
+    }
+    throw new Error(errorMessage)
   }
 
   const data = await response.json()
@@ -159,7 +200,8 @@ export async function getRun(runId: string): Promise<RunResult | null> {
 
   // Real API call
   try {
-    const response = await fetch(`${API_BASE}/runs/${runId}`)
+    const apiBase = getApiBase()
+    const response = await fetch(`${apiBase}/runs/${runId}`)
     if (!response.ok) {
       return null
     }
@@ -223,7 +265,15 @@ export function streamRunEvents(
   }
 
   // Real SSE streaming
-  const eventSource = new EventSource(`${API_BASE}/runs/${runId}/stream`)
+  const apiBase = getApiBase()
+  const streamUrl = `${apiBase}/runs/${runId}/stream`
+  console.log(`[SSE] Connecting to: ${streamUrl}`)
+  
+  const eventSource = new EventSource(streamUrl)
+  
+  eventSource.onopen = () => {
+    console.log(`[SSE] Connection opened to ${streamUrl}`)
+  }
   
   eventSource.onmessage = (e) => {
     try {
@@ -237,16 +287,40 @@ export function streamRunEvents(
         saveStoredRun(transformed)
       }
     } catch (error) {
-      console.error('Error parsing SSE event:', error)
+      console.error('Error parsing SSE event:', error, e.data)
     }
   }
   
+  let errorCount = 0
   eventSource.onerror = (error) => {
-    console.error('SSE error:', error)
-    eventSource.close()
+    errorCount++
+    console.error(`[SSE] Connection error (attempt ${errorCount}):`, error)
+    console.error(`[SSE] EventSource readyState: ${eventSource.readyState}`)
+    // EventSource.readyState: 0 = CONNECTING, 1 = OPEN, 2 = CLOSED
+    if (eventSource.readyState === EventSource.CLOSED) {
+      console.error('[SSE] Connection closed. This might be due to:')
+      console.error('  - Backend not running')
+      console.error('  - CORS issue')
+      console.error('  - Network connectivity issue')
+      console.error(`  - URL: ${streamUrl}`)
+      
+      // After multiple failures, stop retrying
+      if (errorCount >= 3) {
+        console.error('[SSE] Too many connection errors, closing connection')
+        eventSource.close()
+        // Emit an error event so the UI can handle it
+        onEvent({
+          type: 'log',
+          message: '⚠ SSE connection failed. Falling back to polling.',
+          timestamp: new Date().toISOString(),
+        })
+      }
+    }
+    // EventSource will automatically retry on error
   }
   
   return () => {
+    console.log(`[SSE] Closing connection to ${streamUrl}`)
     eventSource.close()
   }
 }
@@ -439,17 +513,32 @@ ${run.generatedTests.split('\n').map((l, i) => `+${l}`).join('\n')}
           break
           
         case 'open_pr':
-          run.pr = {
-            title: `Add tests for ${payload.functionName}`,
-            body: `This PR adds comprehensive test coverage for \`${payload.functionName}\`.\n\n- Coverage: ${run.coverageSummary.lines}% lines, ${run.coverageSummary.branches}% branches\n- Generated ${run.generatedTests.split('def test_').length - 1} test cases\n- Output location: \`experiments/${runId}/\``,
-            url: `https://github.com/example/repo/pull/123`,
-            changedFiles: [`experiments/${runId}/test_${payload.functionName}.py`],
+          // In mock mode, only create PR if repo URL is provided
+          if (payload.options.repoUrl) {
+            run.pr = {
+              title: `Add tests for ${payload.functionName}`,
+              body: `This PR adds comprehensive test coverage for \`${payload.functionName}\`.\n\n- Coverage: ${run.coverageSummary.lines}% lines, ${run.coverageSummary.branches}% branches\n- Generated ${run.generatedTests.split('def test_').length - 1} test cases\n- Output location: \`experiments/${runId}/\`\n\nNote: This is a mock PR. In production, a real PR would be created.`,
+              url: undefined, // No URL in mock mode
+              changedFiles: [`experiments/${runId}/test_${payload.functionName}.py`],
+            }
+            onEvent({
+              type: 'log',
+              message: '⚠ Mock mode: PR creation simulated (no real PR created)',
+              timestamp: new Date().toISOString(),
+            })
+          } else {
+            run.pr = {
+              title: `Add tests for ${payload.functionName}`,
+              body: `This PR adds comprehensive test coverage for \`${payload.functionName}\`.\n\n- Coverage: ${run.coverageSummary.lines}% lines, ${run.coverageSummary.branches}% branches\n- Generated ${run.generatedTests.split('def test_').length - 1} test cases\n- Output location: \`experiments/${runId}/\`\n\nError: Repository URL not provided. Cannot create PR.`,
+              url: undefined,
+              changedFiles: [`experiments/${runId}/test_${payload.functionName}.py`],
+            }
+            onEvent({
+              type: 'log',
+              message: '⚠ PR creation skipped: Repository URL not provided',
+              timestamp: new Date().toISOString(),
+            })
           }
-          onEvent({
-            type: 'log',
-            message: '✓ Pull request created',
-            timestamp: new Date().toISOString(),
-          })
           break
       }
       
@@ -495,7 +584,8 @@ export async function cancelRun(runId: string): Promise<void> {
   }
 
   // Real API call
-  const response = await fetch(`${API_BASE}/runs/${runId}/cancel`, {
+  const apiBase = getApiBase()
+  const response = await fetch(`${apiBase}/runs/${runId}/cancel`, {
     method: 'POST',
   })
 

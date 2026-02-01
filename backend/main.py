@@ -28,9 +28,10 @@ from models import (
 app = FastAPI(title="veritas-pytest API")
 
 # CORS middleware for frontend
+# Allow localhost and local network IPs (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Next.js dev server
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2[0-9]|3[0-1])\.\d+\.\d+):\d+",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -150,6 +151,7 @@ async def stream_run_events(run_id: str):
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable buffering for nginx
         },
     )
 
@@ -365,12 +367,26 @@ async def execute_pipeline(run_id: str, payload: StartRunPayload):
                     "timestamp": datetime.now().isoformat(),
                 })
             else:
+                # Extract error message from PR body if present
+                error_msg = "Unknown error"
+                if "Error creating PR" in pr_info.body:
+                    # Extract the error message from the body
+                    error_lines = pr_info.body.split("\n")
+                    for line in error_lines:
+                        if "Error creating PR" in line:
+                            error_msg = line.replace("Error creating PR", "").strip()
+                            if error_msg.startswith(":"):
+                                error_msg = error_msg[1:].strip()
+                            break
+                
                 emit_event(run_id, {
                     "type": "log",
-                    "message": f"⚠ PR creation failed or skipped. Check logs for details.",
+                    "message": f"⚠ PR creation failed: {error_msg}",
                     "timestamp": datetime.now().isoformat(),
                 })
-                print(f"[PR Creation] PR URL is None. Error may be in PR body: {pr_info.body[:200]}")
+                print(f"[PR Creation] PR URL is None.")
+                print(f"[PR Creation] Full PR body: {pr_info.body}")
+                print(f"[PR Creation] Error: {error_msg}")
             
             await update_step(run_id, "open_pr", "success" if pr_info.url else "fail")
         
